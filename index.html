@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Haikei House</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+    body { margin: 0; overflow: hidden; background: #111; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; }
+    #rooms {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; gap: 8px; max-width: 94vw;
+      overflow-x: auto; padding: 8px 10px; border-radius: 999px;
+      background: rgba(18, 18, 18, 0.78); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      scrollbar-width: none;
+    }
+    #rooms::-webkit-scrollbar { display: none; }
+    .room-btn {
+      appearance: none; border: none; background: transparent;
+      color: #ccc; padding: 8px 14px; border-radius: 999px;
+      font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .room-btn.active { background: #fff; color: #111; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <nav id="rooms"></nav>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+    // Exact room coordinates extracted from haikei_house_20261018.glb slots
+    const ROOMS = [
+      { name: 'Irori',      pos: [14.73, 0.45, 20.46], yaw: 0.5 },
+      { name: 'Washitsu S', pos: [18.73, 0.45, 20.46], yaw: -2.4 },
+      { name: 'Washitsu N', pos: [18.73, 0.45, 16.46], yaw: 0.0 },
+      { name: 'Bedroom',    pos: [14.73, 0.45, 16.46], yaw: -1.57 },
+      { name: 'Doma',       pos: [9.73,  0.05, 19.20], yaw: -0.4 },
+      { name: 'Engawa',     pos: [16.60, 0.42, 23.18], yaw: 0.0 },
+      { name: 'Garden',     pos: [13.60, 0.05, 27.50], yaw: 0.0 }
+    ];
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.012);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 150);
+    camera.rotation.order = 'YXZ';
+    camera.position.set(0, 1.6, 0);
+
+    const rig = new THREE.Group();
+    rig.add(camera);
+    scene.add(rig);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType('local-floor');
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    document.body.appendChild(renderer.domElement);
+
+    // Only show ENTER VR button on Quest / WebXR-capable headsets
+    if ('xr' in navigator) {
+      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+        if (supported) {
+          const vrBtn = VRButton.createButton(renderer);
+          vrBtn.style.bottom = '76px';
+          document.body.appendChild(vrBtn);
+        }
+      });
+    }
+
+    // Lighting
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x443322, 1.5);
+    hemiLight.position.set(0, 25, 0);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff4e0, 2.0);
+    dirLight.position.set(25, 35, 30);
+    scene.add(dirLight);
+
+    // Build Room Location Buttons
+    const roomsNav = document.getElementById('rooms');
+    let currentRoomIndex = 0;
+    let yaw = 0;
+    let pitch = 0;
+
+    function goToRoom(index) {
+      currentRoomIndex = index;
+      const room = ROOMS[index];
+      rig.position.set(room.pos[0], room.pos[1], room.pos[2]);
+
+      if (renderer.xr.isPresenting) {
+        rig.rotation.y = room.yaw;
+      } else {
+        rig.rotation.y = 0;
+        yaw = room.yaw;
+        pitch = 0;
+        camera.rotation.set(pitch, yaw, 0);
+      }
+
+      document.querySelectorAll('.room-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', i === index);
+      });
+    }
+
+    ROOMS.forEach((room, index) => {
+      const btn = document.createElement('button');
+      btn.className = 'room-btn';
+      btn.textContent = room.name;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        goToRoom(index);
+      });
+      roomsNav.appendChild(btn);
+    });
+
+    goToRoom(0);
+
+    // Auto-load haikei_house_20261018.glb
+    const walkableMeshes = [];
+    const loader = new GLTFLoader();
+    loader.load('./haikei_house_20261018.glb', (gltf) => {
+      gltf.scene.traverse((child) => {
+        if (child.isMesh) walkableMeshes.push(child);
+      });
+      scene.add(gltf.scene);
+    });
+
+    // Touch / Mouse 360° Look for Mobile & Desktop
+    let isDragging = false;
+    let prevX = 0;
+    let prevY = 0;
+
+    window.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('#rooms')) return;
+      isDragging = true;
+      prevX = e.clientX;
+      prevY = e.clientY;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!isDragging || renderer.xr.isPresenting) return;
+      const dx = e.clientX - prevX;
+      const dy = e.clientY - prevY;
+      prevX = e.clientX;
+      prevY = e.clientY;
+
+      yaw += dx * 0.0045;
+      pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch + dy * 0.0045));
+      camera.rotation.set(pitch, yaw, 0);
+    });
+
+    window.addEventListener('pointerup', () => { isDragging = false; });
+    window.addEventListener('pointercancel', () => { isDragging = false; });
+
+    // Quest 3 Locomotion + Room Cycling (A / X button) + Floor Raycasting
+    const clock = new THREE.Clock();
+    const raycaster = new THREE.Raycaster();
+    const downVector = new THREE.Vector3(0, -1, 0);
+    const rayOrigin = new THREE.Vector3();
+    const headPos = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    let snapReady = true;
+    let roomBtnReady = true;
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 0.1);
+      const session = renderer.xr.getSession();
+
+      if (session) {
+        const xrCam = renderer.xr.getCamera();
+        xrCam.getWorldDirection(forward);
+        forward.y = 0;
+        forward.normalize();
+        right.crossVectors(forward, rig.up).normalize();
+
+        let moveX = 0, moveZ = 0;
+        let aOrXPressed = false;
+
+        for (const source of session.inputSources) {
+          if (!source.gamepad) continue;
+          const axes = source.gamepad.axes;
+          const x = axes.length > 2 ? axes[2] : axes[0];
+          const y = axes.length > 3 ? axes[3] : axes[1];
+
+          if (source.handedness === 'left') {
+            if (Math.abs(x) > 0.15) moveX = x;
+            if (Math.abs(y) > 0.15) moveZ = y;
+          } else if (source.handedness === 'right') {
+            if (Math.abs(x) > 0.65) {
+              if (snapReady) {
+                rig.rotation.y -= Math.sign(x) * (Math.PI / 4);
+                snapReady = false;
+              }
+            } else if (Math.abs(x) < 0.2) {
+              snapReady = true;
+            }
+          }
+
+          // Quest A or X button (buttons[4]) cycles rooms inside VR
+          if (source.gamepad.buttons[4]?.pressed) {
+            aOrXPressed = true;
+          }
+        }
+
+        if (aOrXPressed && roomBtnReady) {
+          goToRoom((currentRoomIndex + 1) % ROOMS.length);
+          roomBtnReady = false;
+        } else if (!aOrXPressed) {
+          roomBtnReady = true;
+        }
+
+        const speed = 2.6;
+        rig.position.addScaledVector(right, moveX * speed * dt);
+        rig.position.addScaledVector(forward, -moveZ * speed * dt);
+
+        if (walkableMeshes.length > 0) {
+          xrCam.getWorldPosition(headPos);
+          rayOrigin.set(headPos.x, rig.position.y + 0.85, headPos.z);
+          raycaster.set(rayOrigin, downVector);
+          raycaster.far = 1.6;
+
+          const hits = raycaster.intersectObjects(walkableMeshes, false);
+          if (hits.length > 0) {
+            const targetY = hits[0].point.y;
+            if (Math.abs(targetY - rig.position.y) < 0.55) {
+              rig.position.y = THREE.MathUtils.lerp(rig.position.y, targetY, 12 * dt);
+            }
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
